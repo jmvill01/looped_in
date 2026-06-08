@@ -11,7 +11,9 @@ diagnose the reported defect:
   3. brakes-specialist     — expert on brakes.py (BUG-4)
   4. park-brake-specialist — expert on park_brake.py (BUG-1)
 
-The full conversation is posted as a single Markdown comment on the issue.
+The conversation is posted incrementally as issue comments so investigators can
+follow the exchange between agents (investigator prompts and specialist replies)
+in near real-time.
 
 Environment variables (set by the workflow):
   GITHUB_TOKEN       — token with issues:write and contents:read
@@ -44,6 +46,7 @@ MODELS_API_URL = "https://models.inference.ai.azure.com/chat/completions"
 GITHUB_API_BASE = "https://api.github.com"
 MODEL = "gpt-4o-mini"
 MAX_TOKENS = 350
+MAX_COMMENT_CHARS = 60000
 
 # ---------------------------------------------------------------------------
 # File loaders
@@ -179,6 +182,33 @@ def post_comment(body: str) -> None:
     )
     resp.raise_for_status()
 
+
+def _trim_for_comment(text: str, limit: int = MAX_COMMENT_CHARS) -> str:
+    """Trim long markdown content so issue-comment payloads stay within API limits."""
+    if len(text) <= limit:
+        return text
+    return text[: limit - 36] + "\n\n...[truncated for comment size]"
+
+
+def post_agent_exchange_comment(
+    title: str,
+    from_agent: str,
+    to_agent: str,
+    prompt: str,
+    response: str,
+) -> None:
+    """Post a structured issue comment showing one agent-to-agent exchange."""
+    body = (
+        f"## {title}\n\n"
+        f"**From:** `{from_agent}`  \n"
+        f"**To:** `{to_agent}`\n\n"
+        f"### Prompt\n"
+        f"```text\n{prompt}\n```\n\n"
+        f"### Response\n"
+        f"{response}\n"
+    )
+    post_comment(_trim_for_comment(body))
+
 # ---------------------------------------------------------------------------
 # Specialist dispatch
 # ---------------------------------------------------------------------------
@@ -244,6 +274,17 @@ def main() -> None:
     triage_clean = _strip_json_block(triage_response)
     print(f"Routing to specialists: {consult_list}")
 
+    post_agent_exchange_comment(
+        title="🔍 Agent Exchange — Initial Triage",
+        from_agent="issue input",
+        to_agent="@issues-investigator",
+        prompt=user_report,
+        response=(
+            f"{triage_clean}\n\n"
+            f"Routing decision: `{consult_list}`"
+        ),
+    )
+
     # --- Step 2: Specialist consultations ---
     specialist_responses: dict[str, str] = {}
     for specialist_key in consult_list:
@@ -256,7 +297,17 @@ def main() -> None:
             f"Please provide your specialist assessment relevant to your controller."
         )
         print(f"Calling {specialist_key} specialist…")
-        specialist_responses[specialist_key] = call_model(system, question)
+        reply = call_model(system, question)
+        specialist_responses[specialist_key] = reply
+
+        specialist_agent = cfg["label"].split("(`")[1].rstrip(")")
+        post_agent_exchange_comment(
+            title=f"🤝 Agent Exchange — Investigator → {specialist_agent}",
+            from_agent="@issues-investigator",
+            to_agent=specialist_agent,
+            prompt=question,
+            response=reply,
+        )
 
     # --- Step 3: Synthesis ---
     context_for_synthesis = (
@@ -269,6 +320,14 @@ def main() -> None:
 
     print("Calling investigator for synthesis…")
     synthesis = call_model(SYNTHESIS_SYSTEM, context_for_synthesis)
+
+    post_agent_exchange_comment(
+        title="✅ Agent Exchange — Synthesis",
+        from_agent="specialist panel",
+        to_agent="@issues-investigator",
+        prompt=context_for_synthesis,
+        response=synthesis,
+    )
 
     # --- Step 4: Build and post comment ---
     separator = "\n\n---\n\n"
