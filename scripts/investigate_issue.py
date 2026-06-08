@@ -62,7 +62,7 @@ def _load_issues_summary() -> str:
         lines.append(
             f"[{issue['id']}] {issue['title']}\n"
             f"  Component: {issue['component']} | Severity: {issue['severity']} | Status: {issue['status']}\n"
-            f"  {issue['description'][:200]}…"
+            f"  {issue['description'][:200]}{'…' if len(issue['description']) > 200 else ''}"
         )
         lines.append("")
     return "\n".join(lines)

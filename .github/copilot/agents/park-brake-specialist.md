@@ -19,7 +19,7 @@ class ParkBrakeController:
 
     def engage(self) -> None:
         if not self.fault_active:
-            self.engaged = False
+            self.engaged = True
             self._braking_torque = self.PARK_BRAKE_TORQUE
 
     def release(self) -> None:
