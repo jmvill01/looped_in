@@ -37,7 +37,7 @@ LOG_INTERVAL: float = 1.0         # Console print interval (s)
 # Phase thresholds
 # ---------------------------------------------------------------------------
 
-ACCEL_DEADBAND_MPH: float = 1.0   # Drop throttle within this band of target
+ACCEL_DEADBAND_MPH: float = 0.0   # Hold throttle until target speed is reached
 
 # ---------------------------------------------------------------------------
 # Simulation phases

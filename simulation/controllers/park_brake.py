@@ -37,18 +37,10 @@ class ParkBrakeController:
     def release(self) -> None:
         """
         Release the park brake.
-
-        .. warning:: **BUG-1** — The holding torque is halved rather than
-           cleared.  After a release command ``_braking_torque`` retains
-           250 Nm of residual drag instead of dropping to 0 Nm.  Every
-           subsequent ``release()`` call will halve it again (250 → 125 → …)
-           but the value asymptotically approaches — never reaches — zero.
         """
         if not self.fault_active:
             self.engaged = False
-            # CORRECT:   self._braking_torque = 0.0
-            # BUG-1:     halved instead of zeroed
-            self._braking_torque = self._braking_torque / 2  # BUG-1
+            self._braking_torque = 0.0
 
     def get_braking_torque(self) -> float:
         """Return the current resistive torque exerted by the park brake (Nm)."""
