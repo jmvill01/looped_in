@@ -39,10 +39,8 @@ GRAVITY: float = 9.81
 
 # Rolling resistance coefficient (dimensionless)
 # Typical value for a passenger car on tarmac: 0.010 – 0.015
-# BUG-3: value is 1.3 (100× too large), producing ~17 400 N of rolling
-#         resistance versus the correct ~174 N.  This overwhelms drive force
-#         at low throttle and dramatically increases time-to-speed.
-ROLLING_RESISTANCE_COEFF: float = 1.3   # BUG-3  (correct value: 0.013)
+# Correct rolling-resistance coefficient for a passenger car on tarmac.
+ROLLING_RESISTANCE_COEFF: float = 0.013
 
 # Shift thresholds (RPM)
 UPSHIFT_RPM: float = 6000.0     # Correct upshift threshold
@@ -106,9 +104,8 @@ class PowertrainController:
 
         F_rr = Crr × m × g
 
-        Due to BUG-3 (ROLLING_RESISTANCE_COEFF = 1.3) this evaluates to
-        ≈ 17 400 N — far exceeding realistic drive force at partial throttle
-        and severely impeding acceleration.
+        With the calibrated coefficient (0.013), this evaluates to
+        ≈ 174 N for the default vehicle parameters.
         """
         return ROLLING_RESISTANCE_COEFF * VEHICLE_MASS_KG * GRAVITY
 
