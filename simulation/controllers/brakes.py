@@ -61,30 +61,16 @@ class BrakesController:
 
         Returns a value in ``[0, MAX_BRAKE_FORCE_N]``; zero means no braking.
 
-        .. warning:: **BUG-4** — The speed error has the wrong sign.
+        Positive speed error means the vehicle is above target and should brake:
 
-           Correct form::
+        .. code-block:: python
 
-               error = current_speed_mph - self.target_speed_mph
-               # positive  ↔  vehicle is *above* target  ↔  needs braking
-
-           Buggy form (as implemented)::
-
-               error = self.target_speed_mph - current_speed_mph
-               # negative  ↔  vehicle is *above* target
-               # force = Kp * (negative) → negative → clamped to 0 by max()
-               # ∴ brakes never engage when the vehicle overspeeds
-
-        The result is that ``compute_brake_force`` always returns 0 during an
-        overspeed condition, allowing the vehicle to accelerate indefinitely
-        past the target speed with no corrective action.
+            error = current_speed_mph - self.target_speed_mph
         """
         if not self.active:
             return 0.0
 
-        # CORRECT:  error = current_speed_mph - self.target_speed_mph
-        # BUG-4:    sign is inverted — error is negative when braking is needed
-        error = self.target_speed_mph - current_speed_mph   # BUG-4
+        error = current_speed_mph - self.target_speed_mph
 
         self._integral += error * dt
         # Clamp integrator to prevent unbounded wind-up
@@ -92,8 +78,6 @@ class BrakesController:
 
         force = self.Kp * error + self.Ki * self._integral
 
-        # With the inverted error, `force` is always <= 0 when speed > target,
-        # so max(0, force) returns 0 — brakes never apply.
         return max(0.0, min(MAX_BRAKE_FORCE_N, force))
 
     # ------------------------------------------------------------------
