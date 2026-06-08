@@ -1,0 +1,256 @@
+{
+  "project": "Vehicle Dynamics Control System (VDCS)",
+  "software_version": "1.2.0",
+  "hardware_platform": "VDCS-ECU-Rev3 / CAN-FD",
+  "description": "Closed-loop vehicle motion management system responsible for Electronic Park Brake (EPB) release sequencing, powertrain torque delivery, automatic gear selection, and hydraulic brake regulation for speed maintenance.",
+  "issues": [
+    {
+      "id": "VDCS-001",
+      "title": "Persistent rear-axle drag following EPB release command — vehicle acceleration below specification",
+      "severity": "High",
+      "priority": "P1",
+      "component": "Park Brake Controller",
+      "subsystem": "Electronic Park Brake (EPB)",
+      "status": "Open",
+      "reported_by": "Vehicle Dynamics Integration Team",
+      "assigned_to": "Unassigned",
+      "date_reported": "2026-04-14",
+      "tags": ["park-brake", "drag", "acceleration", "NVH"],
+      "description": "After the EPB release command is issued and confirmed (EPB_ENGAGED flag transitions to FALSE), the vehicle exhibits measurably higher-than-expected resistance to forward motion. The effect is consistent across repeated test cycles and multiple vehicles built with software version 1.2.0. The resistance is localised to the rear axle based on wheel-speed differential analysis and brake-disc thermal data.",
+      "steps_to_reproduce": [
+        "1. Place vehicle in stationary position on level tarmac.",
+        "2. Confirm EPB is engaged (EPB_ENGAGED = TRUE via OBD2 PID 0x2210).",
+        "3. Issue EPB release command via the EPB switch or software command.",
+        "4. Confirm EPB_ENGAGED transitions to FALSE.",
+        "5. Engage Drive (D) and apply 100 % throttle.",
+        "6. Log rear-axle brake temperature (sensor IDs: RR_TEMP, RL_TEMP), wheel speeds, and 0–30 mph elapsed time."
+      ],
+      "observed_behavior": "EPB_ENGAGED correctly shows FALSE after the release command. However, rear brake disc temperatures continue to rise during the acceleration run at a rate inconsistent with aerodynamic or ambient heating alone. The 0–30 mph time is 40–60 % longer than the vehicle specification of approximately 8 s. Wheel-speed sensors confirm both rear wheels are rotating, ruling out a fully-seized calliper.",
+      "expected_behavior": "Following a confirmed EPB release, rear-axle resistive torque should be 0 Nm. 0–30 mph time should be within ±10 % of the 8 s specification when powertrain is operating normally.",
+      "data_logs": {
+        "test_run_ref": "VDCS-DL-20260414-001",
+        "EPB_ENGAGED_after_release": false,
+        "rear_brake_temp_rise_degC_per_min": 4.7,
+        "expected_temp_rise_degC_per_min": 0.3,
+        "measured_0_to_30mph_s": 48.2,
+        "specified_0_to_30mph_s": 8.0
+      },
+      "additional_notes": "The anomalous drag force is estimated at 700–800 N based on coast-down deceleration testing, which is broadly consistent with a partial rear-axle braking event. Front brake temperatures are nominal. A separate test where the EPB command was issued twice in succession showed a slight reduction in drag, though it remained above zero.",
+      "related_issues": ["VDCS-003"],
+      "conversations": [
+        {
+          "author": "Maya Chen — Vehicle Dynamics Lead",
+          "timestamp": "2026-04-14T09:15:00Z",
+          "message": "Opened this issue after seeing consistent outliers in the acceleration test data. Three different test vehicles, same software build — all show the rear drag signature. We initially suspected a mechanical EPB calliper that was slow to retract, but borescope inspection cleared that. Something in software is leaving the rears partially loaded."
+        },
+        {
+          "author": "Raj Patel — Brake Systems Engineer",
+          "timestamp": "2026-04-14T11:30:00Z",
+          "message": "I pulled the CAN trace from the last run. EPB_ENGAGED transitions cleanly to 0 (FALSE) within 180 ms of the release request — that's within spec. The hydraulic brake pressure at the rear callipers is essentially zero, so this isn't the service-brake system. It must be something mechanical to the EPB actuator... or there's a torque offset that isn't being cleared in software. I'd like the EPB controller team to review their state machine for the release path."
+        },
+        {
+          "author": "EPB Controller Specialist (Agent: @epb-agent)",
+          "timestamp": "2026-04-15T08:00:00Z",
+          "message": "Reviewed the release path in the state machine. The engaged flag flips correctly and there are no fault codes being set. However, I notice there's an internal torque variable that the EPB actuator firmware uses to command the actuator motor. I can see the state-machine transitions, but I'd want to trace what value that torque variable holds *after* the state machine completes the release. The EPB_ENGAGED flag is separate from the actuator's torque command register — it's possible one is updated and the other isn't fully cleared. Can someone share the EPB torque register dump from the same CAN trace?"
+        },
+        {
+          "author": "Maya Chen — Vehicle Dynamics Lead",
+          "timestamp": "2026-04-15T14:22:00Z",
+          "message": "Good point. I'll request the internal register dump. In the meantime, our workaround for on-track testing is to cycle the EPB switch twice before launching. The second cycle seems to reduce the drag further, though it doesn't eliminate it. That behaviour pattern might be a useful diagnostic clue for the software team."
+        },
+        {
+          "author": "Raj Patel — Brake Systems Engineer",
+          "timestamp": "2026-04-16T10:45:00Z",
+          "message": "The 'two-cycle reduces drag' observation is interesting — if each release command progressively reduces (but doesn't zero) the internal torque value, that would explain why cycling helps without fully resolving the issue. Logging ticket raised to capture the actuator torque register on every EPB transition."
+        }
+      ]
+    },
+    {
+      "id": "VDCS-002",
+      "title": "Vehicle cannot maintain target cruise speed — overshoots setpoint with no corrective braking observed",
+      "severity": "High",
+      "priority": "P1",
+      "component": "Brakes Controller",
+      "subsystem": "Hydraulic Speed Regulation",
+      "status": "Open",
+      "reported_by": "Controls Calibration Team",
+      "assigned_to": "Unassigned",
+      "date_reported": "2026-04-22",
+      "tags": ["brakes", "speed-control", "PI-controller", "overspeed"],
+      "description": "When the vehicle reaches the target cruise speed (30 mph in the test scenario), the brake controller does not apply any corrective braking force. The vehicle continues to accelerate past the setpoint with throttle released, with only engine-braking / aerodynamic drag providing any deceleration. The brake actuator shows zero hydraulic pressure command from the VDCS ECU throughout the overspeed window, which indicates the issue is in the controller's demand calculation, not in the hydraulic actuation hardware.",
+      "steps_to_reproduce": [
+        "1. Configure VDCS with TARGET_SPEED = 30 mph.",
+        "2. Accelerate vehicle from rest toward target.",
+        "3. Monitor VDCS_BRAKE_DEMAND_N (CAN ID 0x318, byte 0–1) once vehicle speed crosses 29 mph.",
+        "4. Observe whether brake force demand increases as speed rises above 30 mph.",
+        "5. Log current_speed_mph, target_speed_mph, computed error, and brake_force_demand at 20 Hz."
+      ],
+      "observed_behavior": "As vehicle speed exceeds 30 mph, VDCS_BRAKE_DEMAND_N remains at 0 N. No brake actuation is commanded despite speed being 2–8 mph above setpoint. The error term logged by the controller reads as a negative value during the overspeed condition, and the subsequent PI output is also negative — which is then clamped to zero before being sent to the brake actuator.",
+      "expected_behavior": "When current_speed_mph > target_speed_mph, the error term should be positive, producing a positive brake force demand up to MAX_BRAKE_FORCE_N (8 000 N). The controller should actively decelerate the vehicle back to the setpoint.",
+      "data_logs": {
+        "test_run_ref": "VDCS-DL-20260422-003",
+        "target_speed_mph": 30.0,
+        "peak_speed_before_engine_drag_correction_mph": 34.8,
+        "brake_demand_at_30mph_N": 0,
+        "brake_demand_at_34mph_N": 0,
+        "error_value_at_34mph": -4.8,
+        "pi_output_at_34mph_N": -792.0,
+        "clamped_output_at_34mph_N": 0
+      },
+      "additional_notes": "Interestingly, the controller *does* produce a non-zero (positive) brake demand when the vehicle is *below* the target speed — this has been observed as unintended braking during the acceleration phase. The controller appears to be generating brake demand at the wrong phase of the speed profile: applying force when the vehicle is below target and releasing it when the vehicle is above target — the inverse of correct behaviour.",
+      "related_issues": ["VDCS-004"],
+      "conversations": [
+        {
+          "author": "Sam Okafor — Controls Calibration Engineer",
+          "timestamp": "2026-04-22T13:00:00Z",
+          "message": "This one took us a while to characterise because the vehicle *does* produce a brake demand — just at entirely the wrong time. During the acceleration run we see up to 5 500 N of brake demand fighting the powertrain. Then the moment we hit 30 mph and throttle lifts, the brake demand drops to zero exactly when we need it most. Something in the error calculation is fundamentally backwards."
+        },
+        {
+          "author": "Brake Controller Specialist (Agent: @brake-agent)",
+          "timestamp": "2026-04-23T09:15:00Z",
+          "message": "The logged error value of -4.8 at 34 mph confirms the issue is in how the error term is computed. A well-formed proportional controller for braking should produce a positive error — and therefore positive force — when actual speed exceeds the target. The fact that the error is negative when overspecd, and positive when underspeed, tells us the polarity of the calculation is flipped. I'd focus the investigation on the line that computes the error variable in the PI loop and verify which operand is being subtracted from which."
+        },
+        {
+          "author": "Sam Okafor — Controls Calibration Engineer",
+          "timestamp": "2026-04-23T11:40:00Z",
+          "message": "Matched that to the source. I can see a subtraction in the error term; the question is operand order. I want to confirm it from a code review rather than guessing, as there may also be an interaction with the integral accumulation path that needs to be corrected at the same time."
+        },
+        {
+          "author": "Raj Patel — Brake Systems Engineer",
+          "timestamp": "2026-04-24T08:30:00Z",
+          "message": "The brake hardware team has confirmed the actuator responds correctly when given a direct force command. Pressure build-up latency is within spec. This is purely a software demand signal issue. Reassigning focus to the controller source code."
+        }
+      ]
+    },
+    {
+      "id": "VDCS-003",
+      "title": "Extremely long 0–30 mph time — vehicle barely accelerates despite full throttle and no hardware faults",
+      "severity": "Critical",
+      "priority": "P0",
+      "component": "Powertrain Controller",
+      "subsystem": "Drive Force Calculation",
+      "status": "Open",
+      "reported_by": "Powertrain Integration Team",
+      "assigned_to": "Unassigned",
+      "date_reported": "2026-04-18",
+      "tags": ["powertrain", "acceleration", "drive-force", "physics-model"],
+      "description": "With all known faults hypothetically corrected (EPB drag excluded), the vehicle still cannot reach 30 mph within the 120-second simulation window under full throttle. Powertrain diagnostics confirm engine torque output is within normal range. The net longitudinal force reported by the VDCS ECU is strongly negative throughout the run, meaning the vehicle is experiencing a massive retarding force that dwarfs the available drive force. No mechanical faults have been identified on the driveline.",
+      "steps_to_reproduce": [
+        "1. Ensure EPB is in a known state (bypass for this test).",
+        "2. Select Drive (D) and apply 100 % throttle from rest.",
+        "3. Log the following at 100 Hz: WHEEL_FORCE_N, ROLLING_RESISTANCE_N, AERO_DRAG_N, NET_FORCE_N, VEHICLE_SPEED_MPH.",
+        "4. Compare ROLLING_RESISTANCE_N against the theoretical value (Crr × m × g).",
+        "5. Note the vehicle speed after 30 s, 60 s, 120 s."
+      ],
+      "observed_behavior": "At full throttle in 6th gear, WHEEL_FORCE_N ≈ 900–1 100 N. However, ROLLING_RESISTANCE_N is logging approximately 17 300–17 500 N — several orders of magnitude above the expected 170–200 N for this vehicle class. NET_FORCE_N is therefore strongly negative (approximately −16 000 N) and the vehicle remains stationary or progresses at < 0.1 mph. Engine RPM, throttle position, and torque estimates all appear correct.",
+      "expected_behavior": "For a 1 361 kg vehicle on tarmac, rolling resistance should be in the range 170–200 N (Crr ≈ 0.013). Net force at full throttle in an appropriate gear should be > 5 000 N, producing acceleration > 3 m/s² from rest.",
+      "data_logs": {
+        "test_run_ref": "VDCS-DL-20260418-002",
+        "wheel_force_at_full_throttle_N": 1050,
+        "rolling_resistance_logged_N": 17361,
+        "expected_rolling_resistance_N": 174,
+        "ratio_actual_vs_expected": 99.8,
+        "net_force_N": -16948,
+        "speed_at_30s_mph": 0.0,
+        "speed_at_60s_mph": 0.0,
+        "speed_at_120s_mph": 0.0
+      },
+      "additional_notes": "The ratio of logged-to-expected rolling resistance is approximately 100×. This precision suggests a systematic calibration or unit error rather than a sensor fault. Tyre inspection, wheel-bearing check, and brake-drag measurement have all returned nominal results — the resistance is not physical, it is being computed internally by the VDCS software. The powertrain physics model contains a constant used in the rolling resistance calculation; that constant and its units should be audited.",
+      "related_issues": ["VDCS-001", "VDCS-004"],
+      "conversations": [
+        {
+          "author": "Tom Eriksson — Powertrain Systems Engineer",
+          "timestamp": "2026-04-18T15:00:00Z",
+          "message": "This is the most alarming one. The powertrain is delivering torque — engine data all looks fine — but the net force is so negative that the vehicle simply cannot move. We've done a full mechanical inspection of two test vehicles and there's nothing wrong physically. The resistance has to be coming from the force model in the ECU software."
+        },
+        {
+          "author": "Powertrain Controller Specialist (Agent: @pt-agent)",
+          "timestamp": "2026-04-19T08:45:00Z",
+          "message": "A 100× overestimate of rolling resistance is a classic unit-mismatch or decimal-point error. The rolling resistance formula is straightforward: F = Crr × m × g, where Crr is a dimensionless coefficient. For a passenger car on clean tarmac, Crr is typically in the range 0.010 to 0.015. If the value in the source code is two decimal places off — for instance, using 1.0 or 1.3 instead of 0.010 or 0.013 — the resulting force would be approximately 100× too high. I'd recommend a direct audit of the Crr constant in the powertrain physics module."
+        },
+        {
+          "author": "Tom Eriksson — Powertrain Systems Engineer",
+          "timestamp": "2026-04-19T11:20:00Z",
+          "message": "That matches the symptom perfectly. I'll raise a code review request for the rolling resistance constant. If it's a literal value in source it should be easy to spot. Also worth checking whether there's any unit conversion happening (e.g. km/h instead of m/s somewhere) that could compound the error."
+        },
+        {
+          "author": "Linh Nguyen — Software Safety Engineer",
+          "timestamp": "2026-04-19T14:00:00Z",
+          "message": "From a safety perspective this is P0 — a vehicle that cannot accelerate is immediately hazardous in a real deployment (merge scenarios, obstacle avoidance, etc.). Even in simulation, this fault prevents any meaningful validation of the speed-maintenance logic. Raising this to blocker status pending code fix."
+        }
+      ]
+    },
+    {
+      "id": "VDCS-004",
+      "title": "Transmission immediately upshifts to 6th gear from standstill — poor launch and low-speed drive performance",
+      "severity": "High",
+      "priority": "P1",
+      "component": "Powertrain Controller",
+      "subsystem": "Automatic Transmission Shift Logic",
+      "status": "Open",
+      "reported_by": "Transmission Calibration Team",
+      "assigned_to": "Unassigned",
+      "date_reported": "2026-04-20",
+      "tags": ["powertrain", "transmission", "shift-logic", "gear-selection", "launch"],
+      "description": "From a stationary start, the VDCS automatic shift logic commands an upshift within the first simulation timestep. Within 0.5–1.0 s of Drive being selected, the GEAR_POSITION signal shows the transmission has jumped from 1st directly to 6th gear. The vehicle then attempts to accelerate from rest in 6th gear, which provides a gear ratio of only 0.79 — roughly one-fifth the drive torque multiplication available in 1st gear. This behaviour is inconsistent with any defined shift schedule and does not match the expected upshift RPM threshold.",
+      "steps_to_reproduce": [
+        "1. Start vehicle from rest with Drive selected.",
+        "2. Log GEAR_POSITION, ENGINE_RPM, VEHICLE_SPEED_MPH, and SHIFT_EVENT_FLAG at 50 Hz.",
+        "3. Observe GEAR_POSITION value during the first 2 s of operation.",
+        "4. Note the ENGINE_RPM value at each upshift event.",
+        "5. Compare observed upshift RPM thresholds against the calibrated shift schedule (upshift should not occur below 6 000 RPM)."
+      ],
+      "observed_behavior": "GEAR_POSITION transitions from 1 → 2 → 3 → 4 → 5 → 6 within the first 5–10 timesteps (0.25–0.5 s) of operation. ENGINE_RPM at the time of each upshift is approximately 800 RPM (idle) — far below the specified upshift threshold of 6 000 RPM. Once in 6th gear, drive torque at the wheel is insufficient to overcome vehicle resistance from rest, and speed remains at zero.",
+      "expected_behavior": "The transmission should hold 1st gear until engine RPM exceeds the upshift threshold (~6 000 RPM), then shift to 2nd, and so on. From rest at idle RPM (800 RPM), no upshift should be commanded. The vehicle should accelerate in lower gears, building RPM naturally before each shift.",
+      "data_logs": {
+        "test_run_ref": "VDCS-DL-20260420-001",
+        "gear_at_t0.0s": 1,
+        "gear_at_t0.1s": 2,
+        "gear_at_t0.5s": 6,
+        "rpm_at_first_upshift": 800,
+        "specified_upshift_rpm": 6000,
+        "drive_force_in_6th_at_idle_N": 312,
+        "drive_force_in_1st_at_peak_torque_N": 14800,
+        "ratio_of_available_force": 0.021
+      },
+      "additional_notes": "The shift events are being triggered far too early — possibly because the shift condition evaluates an RPM threshold check with the wrong inequality operator (less-than versus greater-than), or because an incorrect threshold value is encoded in the shift logic. In either case, the vehicle always satisfies the upshift condition from idle, causing it to race through all six gears before the wheel has turned a full revolution. A correct downshift condition does appear to exist (RPM > 5 000 triggers a downshift), but it never fires because the vehicle cannot build RPM in 6th gear.",
+      "related_issues": ["VDCS-003"],
+      "conversations": [
+        {
+          "author": "Priya Sharma — Transmission Calibration Engineer",
+          "timestamp": "2026-04-20T10:00:00Z",
+          "message": "I've seen bizarre shift behaviour before, but this is a new one. The TCM shift schedule file hasn't changed — we've cross-checked it against the golden baseline. The problem has to be in how the VDCS ECU is *evaluating* those thresholds in the auto_shift function, not in the calibration values themselves."
+        },
+        {
+          "author": "Powertrain Controller Specialist (Agent: @pt-agent)",
+          "timestamp": "2026-04-20T14:30:00Z",
+          "message": "Upshifting at idle RPM (800 RPM) when the threshold is 6 000 RPM is a textbook inverted-condition bug. The shift function almost certainly contains a comparison like `if rpm < threshold` where `rpm < 3000` (or similar) instead of `if rpm > threshold`. At startup, RPM = 800, which satisfies any 'less-than' condition unconditionally, so the loop hammers the gear up to maximum immediately. I'd focus the code review on the upshift branch of the auto_shift function and specifically verify the direction of the inequality in the upshift condition."
+        },
+        {
+          "author": "Priya Sharma — Transmission Calibration Engineer",
+          "timestamp": "2026-04-21T09:00:00Z",
+          "message": "That's a very targeted hypothesis. I'll coordinate with the controls software team to review the upshift branch. If confirmed, the fix should be a single-character change to the comparison operator."
+        },
+        {
+          "author": "Maya Chen — Vehicle Dynamics Lead",
+          "timestamp": "2026-04-21T11:15:00Z",
+          "message": "Note for the team: VDCS-003 (the rolling resistance fault) and VDCS-004 (the shift logic fault) both contribute to the vehicle failing to accelerate, but through completely different mechanisms. Even if VDCS-004 were fixed in isolation, the extreme rolling resistance from VDCS-003 would still prevent motion. Both faults need to be addressed together for the acceleration scenario to work end-to-end. Similarly, even with both powertrain faults fixed, VDCS-001 (EPB drag) and VDCS-002 (brake controller overspeed) would still prevent the full scenario from passing. All four issues need to be resolved."
+        },
+        {
+          "author": "Linh Nguyen — Software Safety Engineer",
+          "timestamp": "2026-04-22T08:00:00Z",
+          "message": "Agreed. All four issues are blocking the V&V sign-off. I've updated the release blocker list accordingly. The recommended investigation order is: VDCS-003 (rolling resistance) → VDCS-004 (shift logic) → VDCS-001 (EPB drag) → VDCS-002 (brake controller). Fixing them in that order makes each subsequent fix testable in isolation."
+        }
+      ]
+    }
+  ],
+  "metadata": {
+    "total_issues": 4,
+    "open": 4,
+    "closed": 0,
+    "critical": 1,
+    "high": 3,
+    "last_updated": "2026-04-24T12:00:00Z",
+    "schema_version": "1.0"
+  }
+}
