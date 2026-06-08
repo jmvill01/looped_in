@@ -120,18 +120,8 @@ class PowertrainController:
         The transmission should:
           • Upshift   when RPM rises above UPSHIFT_RPM  (6 000 RPM).
           • Downshift when RPM falls below DOWNSHIFT_RPM (2 000 RPM).
-
-        .. warning:: **BUG-2** — The upshift condition uses the wrong comparison
-           operator.  ``self.rpm < UPSHIFT_RPM`` fires immediately from idle
-           (800 RPM), causing the transmission to ratchet straight to 6th gear
-           within the first few timesteps.  At 6th gear the drive torque is too
-           low to accelerate the vehicle from a standstill, producing very
-           sluggish launch behaviour.
         """
-        # CORRECT:   if self.rpm > UPSHIFT_RPM and self.current_gear < len(GEAR_RATIOS):
-        # BUG-2:     operator is inverted (<  instead of >) so the condition fires
-        #            whenever rpm is *below* UPSHIFT_RPM — i.e. always at idle
-        if self.rpm < UPSHIFT_RPM and self.current_gear < len(GEAR_RATIOS):  # BUG-2
+        if self.rpm > UPSHIFT_RPM and self.current_gear < len(GEAR_RATIOS):
             self.current_gear += 1
         elif self.rpm < DOWNSHIFT_RPM and self.current_gear > 1:
             self.current_gear -= 1

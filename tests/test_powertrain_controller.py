@@ -3,6 +3,7 @@ import unittest
 from simulation.controllers.powertrain import (
     GRAVITY,
     ROLLING_RESISTANCE_COEFF,
+    UPSHIFT_RPM,
     VEHICLE_MASS_KG,
     PowertrainController,
 )
@@ -23,6 +24,24 @@ class PowertrainControllerTests(unittest.TestCase):
         controller.set_throttle(1.0)
 
         self.assertGreater(controller.compute_wheel_force(), controller.compute_rolling_resistance())
+
+    def test_auto_shift_does_not_upshift_at_idle_rpm(self) -> None:
+        controller = PowertrainController()
+        controller.current_gear = 1
+        controller.rpm = UPSHIFT_RPM - 100.0
+
+        controller.auto_shift()
+
+        self.assertEqual(controller.current_gear, 1)
+
+    def test_auto_shift_upshifts_above_threshold(self) -> None:
+        controller = PowertrainController()
+        controller.current_gear = 1
+        controller.rpm = UPSHIFT_RPM + 100.0
+
+        controller.auto_shift()
+
+        self.assertEqual(controller.current_gear, 2)
 
 
 if __name__ == "__main__":
